@@ -1,5 +1,7 @@
 trigger:
-- master
+ branches:
+   include:
+     - '*'
 
 stages:
 - stage: fuzzit
@@ -130,38 +132,3 @@ stages:
       inputs:
         command: 'test'
         arguments: './...'
-
-- stage: build_docker_image
-  displayName: "Build Docker image"
-  dependsOn: run_checks
-  jobs:
-  - job: build
-    displayName: "Build"
-    pool:
-      vmImage: ubuntu-latest
-    steps:
-    - task: Docker@2
-      inputs:
-        command: 'build'
-        Dockerfile: 'Dockerfile'
-        buildContext: '.'
-        addPipelineData: false
-
-- stage: publish_docker_image
-  displayName: "Publish Docker image"
-  dependsOn: build_docker_image
-  condition: and(succeeded(), eq(variables['Build.SourceBranchName'], 'master'))
-  jobs:
-  - job: publish
-    displayName: "Publish"
-    pool:
-      vmImage: ubuntu-latest
-    steps:
-    - task: Docker@2
-      inputs:
-        containerRegistry: 'DockerHub'
-        repository: 'pelletier/go-toml'
-        command: 'buildAndPush'
-        Dockerfile: 'Dockerfile'
-        buildContext: '.'
-        tags: 'latest'
