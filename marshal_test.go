@@ -1444,6 +1444,54 @@ func TestMarshalCustomMultiline(t *testing.T) {
 	}
 }
 
+func TestMarshalEmbedTree(t *testing.T) {
+	expected := []byte(`OuterField1 = "Out"
+OuterField2 = 1024
+
+[TreeField]
+  InnerField1 = "In"
+  InnerField2 = 2048
+
+  [TreeField.EmbedStruct]
+    EmbedField = "Embed"
+`)
+	type InnerStruct struct {
+		InnerField1 string
+		InnerField2 int
+		EmbedStruct struct{
+			EmbedField string
+		}
+	}
+
+	type OuterStruct struct {
+		OuterField1 string
+		OuterField2 int
+		TreeField *Tree
+	}
+
+	tree, err := Load(`
+InnerField1 = "In"
+InnerField2 = 2048
+
+[EmbedStruct]
+	EmbedField = "Embed"
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out := OuterStruct{
+		"Out",
+		1024,
+		tree,
+	}
+	actual, _ := Marshal(out)
+
+	if !bytes.Equal(actual, expected){
+		t.Errorf("Bad marshal: expected %s, got %s", expected, actual)
+	}
+}
+
 var testDocBasicToml = []byte(`
 [document]
   bool_val = true
@@ -2400,6 +2448,44 @@ func TestMarshalLocalTime(t *testing.T) {
 	}
 }
 
+// test case for issue #339
+func TestUnmarshalSameInnerField(t *testing.T) {
+	type InterStruct2 struct {
+		Test string
+		Name string
+		Age  int
+	}
+	type Inter2 struct {
+		Name         string
+		Age          int
+		InterStruct2 InterStruct2
+	}
+	type Server struct {
+		Name   string `toml:"name"`
+		Inter2 Inter2 `toml:"inter2"`
+	}
+
+	var server Server
+
+	if err := Unmarshal([]byte(`name = "123"
+[inter2]
+name = "inter2"
+age = 222`), &server); err == nil {
+		expected := Server{
+			Name: "123",
+			Inter2: Inter2{
+				Name: "inter2",
+				Age:  222,
+			},
+		}
+		if !reflect.DeepEqual(server, expected) {
+			t.Errorf("Bad unmarshal: expected %v, got %v", expected, server)
+		}
+	} else {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestMarshalInterface(t *testing.T) {
 	type InnerStruct struct {
 		InnerField string
@@ -2636,3 +2722,54 @@ InnerField = "After4"
 		t.Fatal(err)
 	}
 }
+
+func TestUnmarshalEmbedTree(t *testing.T) {
+	toml := []byte(`
+OuterField1 = "Out"
+OuterField2 = 1024
+
+[TreeField]
+InnerField1 = "In"
+InnerField2 = 2048
+
+	[TreeField.EmbedStruct]
+		EmbedField = "Embed"
+
+`)
+	type InnerStruct struct {
+		InnerField1 string
+		InnerField2 int
+		EmbedStruct struct{
+			EmbedField string
+		}
+	}
+
+	type OuterStruct struct {
+		OuterField1 string
+		OuterField2 int
+		TreeField *Tree
+	}
+
+	out := OuterStruct{}
+	actual := InnerStruct{}
+	expected := InnerStruct{
+		"In",
+		2048,
+		struct{
+			EmbedField string
+		}{
+			EmbedField:"Embed",
+		},
+	}
+	if err := Unmarshal(toml, &out); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.TreeField.Unmarshal(&actual); err != nil {
+		t.Fatal(err)
+	}
+
+	if !reflect.DeepEqual(actual, expected){
+		t.Errorf("Bad unmarshal: expected %v, got %v", expected, actual)
+	}
+}
+

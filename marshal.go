@@ -320,20 +320,25 @@ func (e *Encoder) valueToTree(mtype reflect.Type, mval reflect.Value) (*Tree, er
 	tval := e.nextTree()
 	switch mtype.Kind() {
 	case reflect.Struct:
-		for i := 0; i < mtype.NumField(); i++ {
-			mtypef, mvalf := mtype.Field(i), mval.Field(i)
-			opts := tomlOptions(mtypef, e.annotation)
-			if opts.include && ((mtypef.Type.Kind() != reflect.Interface && !opts.omitempty) || !isZero(mvalf)) {
-				val, err := e.valueToToml(mtypef.Type, mvalf)
-				if err != nil {
-					return nil, err
-				}
+		switch mval.Interface().(type) {
+		case Tree:
+			reflect.ValueOf(tval).Elem().Set(mval)
+		default:
+			for i := 0; i < mtype.NumField(); i++ {
+				mtypef, mvalf := mtype.Field(i), mval.Field(i)
+				opts := tomlOptions(mtypef, e.annotation)
+				if opts.include && ((mtypef.Type.Kind() != reflect.Interface && !opts.omitempty) || !isZero(mvalf)) {
+					val, err := e.valueToToml(mtypef.Type, mvalf)
+					if err != nil {
+						return nil, err
+					}
 
-				tval.SetWithOptions(opts.name, SetOptions{
-					Comment:   opts.comment,
-					Commented: opts.commented,
-					Multiline: opts.multiline,
-				}, val)
+					tval.SetWithOptions(opts.name, SetOptions{
+						Comment:   opts.comment,
+						Commented: opts.commented,
+						Multiline: opts.multiline,
+					}, val)
+				}
 			}
 		}
 	case reflect.Map:
@@ -570,11 +575,17 @@ func (d *Decoder) valueFromTree(mtype reflect.Type, tval *Tree, mval1 *reflect.V
 			mval = reflect.New(mtype).Elem()
 		}
 
-		for i := 0; i < mtype.NumField(); i++ {
-			mtypef := mtype.Field(i)
-			an := annotation{tag: d.tagName}
-			opts := tomlOptions(mtypef, an)
-			if opts.include {
+		switch mval.Interface().(type) {
+		case Tree:
+			mval.Set(reflect.ValueOf(tval).Elem())
+		default:
+			for i := 0; i < mtype.NumField(); i++ {
+				mtypef := mtype.Field(i)
+				an := annotation{tag: d.tagName}
+				opts := tomlOptions(mtypef, an)
+				if !opts.include {
+					continue
+				}
 				baseKey := opts.name
 				keysToTry := []string{
 					baseKey,
@@ -584,20 +595,22 @@ func (d *Decoder) valueFromTree(mtype reflect.Type, tval *Tree, mval1 *reflect.V
 				}
 
 				found := false
-				for _, key := range keysToTry {
-					exists := tval.Has(key)
-					if !exists {
-						continue
+				if tval != nil {
+					for _, key := range keysToTry {
+						exists := tval.Has(key)
+						if !exists {
+							continue
+						}
+						val := tval.Get(key)
+						fval := mval.Field(i)
+						mvalf, err := d.valueFromToml(mtypef.Type, val, &fval)
+						if err != nil {
+							return mval, formatError(err, tval.GetPosition(key))
+						}
+						mval.Field(i).Set(mvalf)
+						found = true
+						break
 					}
-					val := tval.Get(key)
-					fval := mval.Field(i)
-					mvalf, err := d.valueFromToml(mtypef.Type, val, &fval)
-					if err != nil {
-						return mval, formatError(err, tval.GetPosition(key))
-					}
-					mval.Field(i).Set(mvalf)
-					found = true
-					break
 				}
 
 				if !found && opts.defaultValue != "" {
@@ -635,7 +648,11 @@ func (d *Decoder) valueFromTree(mtype reflect.Type, tval *Tree, mval1 *reflect.V
 
 				// save the old behavior above and try to check structs
 				if !found && opts.defaultValue == "" && mtypef.Type.Kind() == reflect.Struct {
-					v, err := d.valueFromTree(mtypef.Type, tval, nil)
+					tmpTval := tval
+					if !mtypef.Anonymous {
+						tmpTval = nil
+					}
+					v, err := d.valueFromTree(mtypef.Type, tmpTval, nil)
 					if err != nil {
 						return v, err
 					}
